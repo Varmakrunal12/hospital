@@ -6,15 +6,53 @@
 // EMAIL OTP (via EmailJS)
 // ---------------------------------------------------------------
 async function sendEmailOTP(email, name, otp) {
+  // Check EmailJS is loaded
+  if (typeof emailjs === 'undefined') {
+    console.error('EmailJS library not loaded!');
+    toast(`OTP (demo): ${otp}`, 'warning', 8000);
+    return false;
+  }
+
+  // Validate config keys are set
+  if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY ||
+      EMAILJS_SERVICE_ID.startsWith('YOUR_') || EMAILJS_TEMPLATE_ID.startsWith('YOUR_')) {
+    console.warn('EmailJS keys not configured in config.js');
+    toast(`OTP (demo mode): ${otp}`, 'warning', 8000);
+    return false;
+  }
+
   try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-      to_email: email, to_name: name || 'User', otp, app_name: 'E-SHR'
-    });
+    // Re-init EmailJS just before sending to ensure it's ready
+    emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+
+    const result = await emailjs.send(
+      EMAILJS_SERVICE_ID,
+      EMAILJS_TEMPLATE_ID,
+      {
+        to_email:  email,
+        to_name:   name || 'User',
+        otp:       otp,
+        app_name:  'E-SHR',
+        message:   `Your E-SHR login OTP is: ${otp}. Valid for 10 minutes. Do not share this with anyone.`,
+      }
+    );
+
+    console.log('EmailJS send result:', result);
     toast(`OTP sent to ${email}`, 'success');
     return true;
+
   } catch (e) {
-    console.warn('EmailJS error:', e);
-    toast(`Demo mode: OTP is ${DEMO_OTP} (EmailJS not configured)`, 'warning', 6000);
+    console.error('EmailJS send error:', e);
+
+    // Show specific error to help debug
+    let errMsg = 'OTP email failed';
+    if (e.status === 400) errMsg = 'EmailJS: Bad request — check template variable names';
+    else if (e.status === 401) errMsg = 'EmailJS: Invalid public key in config.js';
+    else if (e.status === 403) errMsg = 'EmailJS: Service not found or blocked';
+    else if (e.status === 422) errMsg = 'EmailJS: Template not found — check TEMPLATE_ID';
+    else if (e.text) errMsg = 'EmailJS: ' + e.text;
+
+    toast(`${errMsg}. Demo OTP: ${otp}`, 'warning', 8000);
     return false;
   }
 }
