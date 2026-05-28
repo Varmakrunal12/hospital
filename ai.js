@@ -51,12 +51,55 @@ async function getAIResponse(userMsg) {
   box.appendChild(typing);
   box.scrollTop = box.scrollHeight;
 
-  const ctx      = u ? `Patient: ${u.firstName} ${u.lastName}, Age:${u.age}, Blood:${u.bloodGroup}, Allergies:${(u.allergies || []).join(',') || 'None'}. ` : '';
-  const response = generateAIResponse(userMsg, ctx, u);
+  // Build patient context for the AI
+  const ctx = u
+    ? `Patient context: Name: ${u.firstName} ${u.lastName}, Age: ${u.age || 'unknown'}, Blood Group: ${u.bloodGroup || 'unknown'}, Allergies: ${(u.allergies || []).join(', ') || 'None'}, Role: ${STATE.userRole}.`
+    : 'No patient context available.';
 
-  await new Promise(r => setTimeout(r, 900 + Math.random() * 600));
-  typing.innerHTML = `<div class="ai-msg-label">E-SHR Health AI</div><div>${response}</div>`;
+  // Build conversation history from existing chat messages
+  const chatMsgs = Array.from(box.querySelectorAll('.ai-msg')).slice(0, -1).map(el => {
+    const isUser = el.classList.contains('user');
+    const text = el.querySelector('div:last-child')?.innerText || '';
+    return { role: isUser ? 'user' : 'assistant', content: text };
+  }).filter(m => m.content);
+
+  // FIX: Use real Claude API instead of hardcoded responses
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: `You are E-SHR Health AI, a medical assistant integrated into a hospital management system. ${ctx}
+
+You help patients and doctors with medical questions, health tips, medication information, allergy guidance, and understanding health records. Be concise, clear, and helpful. Use bullet points where appropriate. Always remind users that your advice is informational only and not a substitute for professional medical care. For emergencies, always direct to call 112.`,
+        messages: [...chatMsgs.slice(-8), { role: 'user', content: userMsg }],
+      })
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.content?.[0]?.text) {
+      const aiText = data.content[0].text;
+      typing.innerHTML = `<div class="ai-msg-label">E-SHR Health AI</div><div>${aiText.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</div>`;
+    } else {
+      // API error — fall back to local smart response
+      const fallback = generateLocalAIResponse(userMsg, u);
+      typing.innerHTML = `<div class="ai-msg-label">E-SHR Health AI</div><div>${fallback}</div>`;
+    }
+  } catch (e) {
+    // Network error — fall back to local smart response
+    const fallback = generateLocalAIResponse(userMsg, u);
+    typing.innerHTML = `<div class="ai-msg-label">E-SHR Health AI</div><div>${fallback}</div>`;
+  }
+
   box.scrollTop = box.scrollHeight;
+}
+
+// Local fallback when API unavailable (keeps existing logic)
+function generateLocalAIResponse(msg, u) {
+  return generateAIResponse(msg, '', u);
 }
 
 function generateAIResponse(msg, ctx, u) {
