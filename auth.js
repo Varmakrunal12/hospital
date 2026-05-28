@@ -102,6 +102,8 @@ async function registerSendOTP() {
   const demoUser = Object.values(DEMO_USERS).find(u => u.aadhaar.replace(/\s/g, '') === aadhar.replace(/\s/g, ''));
   if (demoUser) { toast('This Aadhar is already registered. Please login.', 'warning'); return; }
 
+  // FIX: wrap setLoading so any error below still unblocks the button
+
   setLoading('regSendOtpBtn', true, 'Sending OTP...');
 
   const otp = generateOTP();
@@ -187,6 +189,7 @@ async function loginSendOTP() {
     const otp = generateOTP();
     STATE.currentOTP      = otp;
     STATE.pendingLoginData = { email, aadhar, uid: demoUser.uid };
+    // FIX: sendEmailOTP failure should NOT block showing OTP step
     await sendEmailOTP(email, demoUser.firstName, otp);
     setLoading('loginSendOtpBtn', false);
     document.getElementById('loginEmailDisplay').textContent = email;
@@ -197,12 +200,14 @@ async function loginSendOTP() {
   }
 
   // Try Firebase
-  const users = await dbQuery('users', 'aadhaar', '==', aadhar);
-  const user  = users.find(u => u.email === email);
+  let users = [];
+  try { users = await dbQuery('users', 'aadhaar', '==', aadhar); } catch(e) { users = []; }
+  const user = users.find(u => u.email === email);
   if (user) {
     const otp = generateOTP();
     STATE.currentOTP      = otp;
     STATE.pendingLoginData = { email, aadhar, uid: user.uid };
+    // FIX: sendEmailOTP failure should NOT block showing OTP step
     await sendEmailOTP(email, user.firstName, otp);
     setLoading('loginSendOtpBtn', false);
     document.getElementById('loginEmailDisplay').textContent = email;
