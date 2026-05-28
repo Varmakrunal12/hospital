@@ -155,6 +155,13 @@ function selectRxPatient(uid) {
         ${p.allergies.map(a => `<span class="tag tag-red">${a}</span>`).join(' ')}
         <div style="font-size:12px;color:var(--text2);margin-top:8px">Check all medicines for conflicts before prescribing.</div>
       </div>`;
+    // FIX: Fire notification in the bell icon panel too
+    addNotification({
+      title: '⚠️ Allergy Alert — ' + p.firstName + ' ' + p.lastName,
+      text: 'Known allergies: ' + p.allergies.join(', ') + '. Check medicines carefully.',
+      type: 'allergy',
+      time: new Date().toISOString(),
+    });
   } else {
     document.getElementById('allergyCheckResult').innerHTML = `
       <div style="padding:12px;background:rgba(0,229,160,0.08);border:1px solid rgba(0,229,160,0.2);border-radius:10px;text-align:center">
@@ -174,12 +181,19 @@ function addRxMedicine() {
   const duration  = document.getElementById('rxDuration').value.trim();
   const timing    = document.getElementById('rxTiming').value;
 
-  // Allergy conflict check
-  const patAlg   = STATE.rxSelectedPatient?.allergies || [];
-  const conflict = patAlg.find(a =>
-    name.toLowerCase().includes(a.toLowerCase()) ||
-    a.toLowerCase().includes(name.split(' ')[0].toLowerCase())
-  );
+  // FIX: Use ALLERGY_MEDICINE_MAP for proper conflict detection
+  const patAlg = STATE.rxSelectedPatient?.allergies || [];
+  let conflict = null;
+
+  for (const alg of patAlg) {
+    // Check in ALLERGY_MEDICINE_MAP first (comprehensive list)
+    const mappedDrugs = ALLERGY_MEDICINE_MAP[alg] || [];
+    const medLower = name.toLowerCase();
+    const inMap = mappedDrugs.some(drug => medLower.includes(drug) || drug.includes(medLower.split(' ')[0]));
+    // Also check direct name match as fallback
+    const directMatch = medLower.includes(alg.toLowerCase()) || alg.toLowerCase().includes(medLower.split(' ')[0]);
+    if (inMap || directMatch) { conflict = alg; break; }
+  }
 
   if (conflict) {
     document.getElementById('allergyCheckResult').innerHTML = `
@@ -189,6 +203,13 @@ function addRxMedicine() {
         <div class="allergy-alert-text">${name} may conflict with patient's allergy: <strong>${conflict}</strong>. Consult before prescribing.</div>
       </div>`;
     toast('Allergy conflict detected! Check carefully.', 'warning', 5000);
+    // FIX: Fire a notification so doctor sees it in the bell icon too
+    addNotification({
+      title: '⚠️ Allergy Alert',
+      text: `${name} conflicts with ${STATE.rxSelectedPatient?.firstName || 'patient'}'s ${conflict} allergy.`,
+      type: 'allergy',
+      time: new Date().toISOString(),
+    });
     return;
   }
 
