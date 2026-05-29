@@ -16,7 +16,7 @@
 
 const AI_CONFIG = {
   // Set to false once you have a working proxy / API key
-  DEMO_MODE : true,
+  DEMO_MODE : false,
 
   // Your proxy endpoint that forwards to Anthropic, OR the
   // Anthropic API directly (not recommended for production).
@@ -24,7 +24,7 @@ const AI_CONFIG = {
   ENDPOINT  : "https://api.anthropic.com/v1/messages",
 
   // Only used when calling Anthropic directly (dev only)
-  API_KEY   : "YOUR_ANTHROPIC_API_KEY",
+  API_KEY   : "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",
 
   MODEL     : "claude-opus-4-20250514",
   MAX_TOKENS: 800,
