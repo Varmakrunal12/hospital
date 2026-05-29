@@ -1,178 +1,206 @@
-// ================================================================
-// ai.js — AI Health Assistant
-// ================================================================
+// ============================================================
+// ai.js  —  E-SHR Health AI  (Claude via Anthropic API)
+// ============================================================
+// This file replaces the demo/stub AI with a real Claude-powered
+// health assistant. The Anthropic API is called from the browser
+// using a proxy pattern (see note below).
+//
+// NOTE ON API KEY:
+//   Never expose your Anthropic API key in client-side code in
+//   production. Use a lightweight backend proxy (Node/Express,
+//   Cloudflare Worker, Firebase Function, etc.) that forwards
+//   requests. For local development / demo you may set the key
+//   directly — the DEMO_MODE flag below lets you test without
+//   any key at all.
+// ============================================================
 
-function initAI() {
-  const u = STATE.userData;
-  if (u && STATE.userRole === 'doctor') {
-    document.getElementById('aiSubtitle').textContent = 'AI Diagnosis Aid — Powered by clinical intelligence';
+const AI_CONFIG = {
+  // Set to false once you have a working proxy / API key
+  DEMO_MODE : true,
+
+  // Your proxy endpoint that forwards to Anthropic, OR the
+  // Anthropic API directly (not recommended for production).
+  // Example proxy: "https://my-worker.username.workers.dev/ai"
+  ENDPOINT  : "https://api.anthropic.com/v1/messages",
+
+  // Only used when calling Anthropic directly (dev only)
+  API_KEY   : "YOUR_ANTHROPIC_API_KEY",
+
+  MODEL     : "claude-opus-4-20250514",
+  MAX_TOKENS: 800,
+};
+
+// ── Build system prompt from patient profile ────────────────
+function buildSystemPrompt() {
+  const user = window._currentUser || {};
+  const parts = [
+    "You are E-SHR Health AI, a friendly and knowledgeable medical assistant",
+    "embedded in the E-SHR Emergency Smart Health Record system.",
+    "Always be concise, empathetic, and evidence-based.",
+    "Never diagnose definitively — recommend consulting a doctor for serious concerns.",
+    "Format responses in plain text without markdown symbols.",
+  ];
+
+  if (user.bloodGroup)  parts.push(`Patient blood group: ${user.bloodGroup}.`);
+  if (user.age)         parts.push(`Patient age: ${user.age} years.`);
+  if (user.allergies && user.allergies.length)
+    parts.push(`Known allergies: ${user.allergies.join(", ")}.`);
+  if (user.weight)      parts.push(`Weight: ${user.weight} kg.`);
+  if (user.height)      parts.push(`Height: ${user.height} cm.`);
+
+  return parts.join(" ");
+}
+
+// ── Conversation history (cleared on page reload) ───────────
+let _aiHistory = [];
+
+// ── Call the AI ─────────────────────────────────────────────
+async function callAI(userMessage) {
+  if (AI_CONFIG.DEMO_MODE) {
+    return demoAIResponse(userMessage);
   }
-}
 
-async function sendAIMessage() {
-  const inp = document.getElementById('aiInput');
-  const msg = inp.value.trim();
-  if (!msg) return;
-  inp.value = '';
-  appendAIMessage('user', msg);
-  await getAIResponse(msg);
-}
+  _aiHistory.push({ role: "user", content: userMessage });
 
-function sendAIQuick(msg) {
-  document.getElementById('aiInput').value = msg;
-  sendAIMessage();
-}
+  // Keep last 10 turns to stay within token limits
+  const messages = _aiHistory.slice(-10);
 
-// Allow Enter key to send message
-document.addEventListener('DOMContentLoaded', () => {
-  const inp = document.getElementById('aiInput');
-  if (inp) {
-    inp.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAIMessage(); }
+  try {
+    const headers = {
+      "Content-Type"      : "application/json",
+      "anthropic-version" : "2023-06-01",
+    };
+
+    // Only add API key header when calling Anthropic directly
+    if (AI_CONFIG.API_KEY !== "YOUR_ANTHROPIC_API_KEY") {
+      headers["x-api-key"] = AI_CONFIG.API_KEY;
+      // Required CORS bypass header for direct browser calls (dev only)
+      headers["anthropic-dangerous-direct-browser-access"] = "true";
+    }
+
+    const res = await fetch(AI_CONFIG.ENDPOINT, {
+      method : "POST",
+      headers,
+      body   : JSON.stringify({
+        model      : AI_CONFIG.MODEL,
+        max_tokens : AI_CONFIG.MAX_TOKENS,
+        system     : buildSystemPrompt(),
+        messages,
+      }),
     });
-  }
-});
 
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const reply = data.content?.[0]?.text || "I could not generate a response.";
+    _aiHistory.push({ role: "assistant", content: reply });
+    return reply;
+
+  } catch (e) {
+    console.error("AI error:", e);
+    _aiHistory.pop(); // remove last user msg on failure
+    return `Sorry, I encountered an error: ${e.message}. Please try again.`;
+  }
+}
+
+// ── Demo responses (when DEMO_MODE = true) ─────────────────
+function demoAIResponse(msg) {
+  const m = msg.toLowerCase();
+  if (m.includes("blood group") || m.includes("blood type")) {
+    const user = window._currentUser || {};
+    const bg   = user.bloodGroup || "unknown";
+    return `Your blood group is ${bg}. ${bg.includes("+") ? "Positive blood groups can receive from both positive and negative of the same type." : "Negative blood groups can donate to both positive and negative of the same type."} Always carry this information in emergencies.`;
+  }
+  if (m.includes("allerg")) {
+    const user = window._currentUser || {};
+    const al   = (user.allergies || []).join(", ") || "none on record";
+    return `Your known allergies: ${al}. Always inform healthcare providers of these before any treatment or prescription. Carry an allergy card with you.`;
+  }
+  if (m.includes("cbc") || m.includes("blood test")) {
+    return "A CBC (Complete Blood Count) measures red blood cells (RBC), white blood cells (WBC), hemoglobin, hematocrit, and platelets. Normal ranges: RBC 4.5–5.5 M/uL, WBC 4,500–11,000/uL, Hemoglobin 13.5–17.5 g/dL (men) or 12–15.5 g/dL (women). Always discuss results with your doctor.";
+  }
+  if (m.includes("fever") || m.includes("temperature")) {
+    return "Normal body temperature is 37°C (98.6°F). A fever is 38°C (100.4°F) or above. Stay hydrated, rest, and take paracetamol if above 38.5°C. Seek immediate care if temperature exceeds 40°C, or if accompanied by rash, severe headache, or difficulty breathing.";
+  }
+  if (m.includes("emergency") || m.includes("heart attack") || m.includes("stroke")) {
+    return "⚠️ EMERGENCY SIGNS: chest pain radiating to arm/jaw, sudden slurred speech, face drooping, sudden severe headache, difficulty breathing. Call 112 immediately. Do not drive yourself to the hospital. Share your E-SHR QR code with paramedics for instant medical history access.";
+  }
+  if (m.includes("medicine") || m.includes("medication") || m.includes("side effect")) {
+    return "Common side effects vary by drug class. Antibiotics may cause nausea, diarrhea, or rash. Pain relievers (NSAIDs) can irritate the stomach — take with food. Always complete your full antibiotic course. Never mix medications without consulting your doctor or pharmacist.";
+  }
+  if (m.includes("health tip") || m.includes("fitness") || m.includes("diet")) {
+    return "Daily health tips: drink 8+ glasses of water, sleep 7–9 hours, walk at least 30 minutes, eat plenty of vegetables and fruits. Limit processed sugar and salt. Monitor your blood pressure and sugar if you have a family history of diabetes or hypertension. Regular check-ups save lives.";
+  }
+  return "I'm your E-SHR Health AI. I can help with understanding your reports, medications, symptoms, and general health guidance. Could you please be more specific about what you'd like to know? (Note: AI mode is currently in demo — set AI_CONFIG.DEMO_MODE = false with a valid API key to enable full AI.)";
+}
+
+// ── UI: Send message ─────────────────────────────────────────
+async function sendAIMessage() {
+  const input = document.getElementById("aiInput");
+  const msg   = input.value.trim();
+  if (!msg) return;
+
+  input.value = "";
+  appendAIMessage("user", msg);
+
+  const typingEl = appendAITyping();
+
+  const reply = await callAI(msg);
+
+  typingEl.remove();
+  appendAIMessage("assistant", reply);
+}
+
+// ── UI: Quick chip ───────────────────────────────────────────
+async function sendAIQuick(msg) {
+  document.getElementById("aiInput").value = msg;
+  await sendAIMessage();
+}
+
+// ── UI: Append message bubble ────────────────────────────────
 function appendAIMessage(role, text) {
-  const box = document.getElementById('aiChatBox');
-  const div = document.createElement('div');
+  const box = document.getElementById("aiChatBox");
+  const div = document.createElement("div");
   div.className = `ai-msg ${role}`;
-  div.innerHTML = `<div class="ai-msg-label">${role === 'user' ? 'You' : 'E-SHR Health AI'}</div><div>${text}</div>`;
+  div.innerHTML  = role === "user"
+    ? `<div class="ai-msg-label">You</div><div>${escapeHtml(text)}</div>`
+    : `<div class="ai-msg-label">E-SHR Health AI</div><div>${escapeHtml(text)}</div>`;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
 
-async function getAIResponse(userMsg) {
-  const u = STATE.userData;
-  const typing = document.createElement('div');
-  typing.className = 'ai-msg assistant';
-  typing.innerHTML = '<div class="ai-msg-label">E-SHR Health AI</div><div><span class="spinner"></span> Thinking...</div>';
-  const box = document.getElementById('aiChatBox');
-  box.appendChild(typing);
+// ── UI: Typing indicator ─────────────────────────────────────
+function appendAITyping() {
+  const box = document.getElementById("aiChatBox");
+  const div = document.createElement("div");
+  div.className = "ai-msg assistant";
+  div.innerHTML = `<div class="ai-msg-label">E-SHR Health AI</div>
+    <div class="ai-typing">
+      <span></span><span></span><span></span>
+    </div>`;
+  box.appendChild(div);
   box.scrollTop = box.scrollHeight;
+  return div;
+}
 
-  // Build patient context for the AI
-  const ctx = u
-    ? `Patient context: Name: ${u.firstName} ${u.lastName}, Age: ${u.age || 'unknown'}, Blood Group: ${u.bloodGroup || 'unknown'}, Allergies: ${(u.allergies || []).join(', ') || 'None'}, Role: ${STATE.userRole}.`
-    : 'No patient context available.';
+// ── Utility: escape HTML ─────────────────────────────────────
+function escapeHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+           .replace(/"/g,"&quot;").replace(/\n/g,"<br>");
+}
 
-  // Build conversation history from existing chat messages
-  const chatMsgs = Array.from(box.querySelectorAll('.ai-msg')).slice(0, -1).map(el => {
-    const isUser = el.classList.contains('user');
-    const text = el.querySelector('div:last-child')?.innerText || '';
-    return { role: isUser ? 'user' : 'assistant', content: text };
-  }).filter(m => m.content);
-
-  // FIX: Use real Claude API instead of hardcoded responses
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: `You are E-SHR Health AI, a medical assistant integrated into a hospital management system. ${ctx}
-
-You help patients and doctors with medical questions, health tips, medication information, allergy guidance, and understanding health records. Be concise, clear, and helpful. Use bullet points where appropriate. Always remind users that your advice is informational only and not a substitute for professional medical care. For emergencies, always direct to call 112.`,
-        messages: [...chatMsgs.slice(-8), { role: 'user', content: userMsg }],
-      })
+// ── Enter key to send ────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  const inp = document.getElementById("aiInput");
+  if (inp) {
+    inp.addEventListener("keydown", e => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendAIMessage();
+      }
     });
-
-    const data = await response.json();
-
-    if (response.ok && data.content?.[0]?.text) {
-      const aiText = data.content[0].text;
-      typing.innerHTML = `<div class="ai-msg-label">E-SHR Health AI</div><div>${aiText.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</div>`;
-    } else {
-      // API error — fall back to local smart response
-      const fallback = generateLocalAIResponse(userMsg, u);
-      typing.innerHTML = `<div class="ai-msg-label">E-SHR Health AI</div><div>${fallback}</div>`;
-    }
-  } catch (e) {
-    // Network error — fall back to local smart response
-    const fallback = generateLocalAIResponse(userMsg, u);
-    typing.innerHTML = `<div class="ai-msg-label">E-SHR Health AI</div><div>${fallback}</div>`;
   }
-
-  box.scrollTop = box.scrollHeight;
-}
-
-// Local fallback when API unavailable (keeps existing logic)
-function generateLocalAIResponse(msg, u) {
-  return generateAIResponse(msg, '', u);
-}
-
-function generateAIResponse(msg, ctx, u) {
-  const lower = msg.toLowerCase();
-  const algs  = u?.allergies || [];
-  const bg    = u?.bloodGroup || '';
-
-  if (lower.includes('blood group') || lower.includes('blood type')) {
-    const info = {
-      'O+' : 'Universal donor for red cells. Can receive from O+ and O-. Common in India (~36% population).',
-      'A+' : 'Can donate to A+ and AB+. Receive from A+, A-, O+, O-.',
-      'B+' : 'Can donate to B+ and AB+. Receive from B+, B-, O+, O-.',
-      'AB+': 'Universal recipient — can receive from all blood types. Rarest major group.',
-      'O-' : 'Universal donor — can give to all blood types. Very valuable in emergencies.',
-      'A-' : 'Can donate to A+, A-, AB+, AB-. Valuable type.',
-      'B-' : 'Can donate to B+, B-, AB+, AB-. Relatively rare.',
-      'AB-': 'Can donate to AB+ and AB-. Rarest blood type.',
-    };
-    return `🩸 <strong>Your Blood Group: ${bg || 'Not set'}</strong><br><br>${info[bg] || 'Update your blood group in Profile for personalized advice.'}<br><br>💡 <em>Tip: Always carry your blood group card in emergencies.</em>`;
-  }
-
-  if (lower.includes('allerg')) {
-    if (!algs.length) return '✅ No allergies are recorded in your profile. If you have any known allergies, please add them in Profile → Edit → Allergies for your safety.';
-    return `⚠️ <strong>Your Recorded Allergies:</strong><br><br>${algs.map(a => `• <strong>${a}</strong>`).join('<br>')}<br><br>🚨 <em>Always inform healthcare providers of these allergies before any treatment. Carry your E-SHR Emergency QR for instant access.</em>`;
-  }
-
-  if (lower.includes('health tip') || lower.includes('lifestyle')) {
-    const tips = [
-      '💧 Drink 8-10 glasses of water daily',
-      '🏃 30 minutes of moderate exercise 5 days/week',
-      '😴 Get 7-9 hours of quality sleep',
-      '🥦 Eat 5 servings of fruits and vegetables daily',
-      '🧘 Practice mindfulness or meditation for stress',
-      '🚭 Avoid smoking and limit alcohol',
-      '☀️ Get sunlight for Vitamin D (10-15 min/day)',
-      '🩺 Annual health check-ups even if feeling well',
-    ];
-    return `💪 <strong>Personalized Health Tips:</strong><br><br>${tips.join('<br>')}<br><br><em>Based on your profile, maintaining healthy blood pressure and weight is key at age ${u?.age || 'your'}.</em>`;
-  }
-
-  if (lower.includes('cbc') || lower.includes('blood test')) {
-    return `🔬 <strong>CBC (Complete Blood Count) Guide:</strong><br><br>
-• <strong>Hemoglobin:</strong> Normal is 12-17 g/dL (women lower end, men higher end)<br>
-• <strong>WBC:</strong> 4,000-11,000 cells/μL (elevated = possible infection)<br>
-• <strong>Platelets:</strong> 150,000-400,000/μL<br>
-• <strong>RBC:</strong> 4.5-5.5 million/μL<br><br>
-📌 <em>Values outside normal range don't always indicate disease — context matters. Consult your doctor for interpretation.</em>`;
-  }
-
-  if (lower.includes('prescription') || lower.includes('medicine') || lower.includes('medication')) {
-    const rxs = u?.prescriptions || [];
-    if (!rxs.length) return '💊 No prescriptions found in your record. When your doctor issues one through E-SHR, it will appear in your Prescriptions section.';
-    const latest = rxs[rxs.length - 1];
-    return `💊 <strong>Your Latest Prescription (${formatDate(latest.date)}):</strong><br><br>
-From: ${latest.doctor || 'Doctor'}<br>
-${(latest.medicines || []).map(m => `• ${m.name} — ${m.dosage} ${m.frequency} for ${m.duration} (${m.timing})`).join('<br>')}
-${latest.notes ? `<br><br>📝 Notes: ${latest.notes}` : ''}`;
-  }
-
-  if (lower.includes('emergency') || lower.includes('help')) {
-    return `🚨 <strong>Emergency Guidance:</strong><br><br>
-🔴 <strong>Call 112</strong> (National Emergency) immediately<br>
-🏥 <strong>AIIMS Helpline:</strong> 011-26593308<br>
-💊 <strong>Poison Control:</strong> 1800-180-1104<br><br>
-Your <strong>Emergency QR Code</strong> in the app gives paramedics instant access to your blood group, allergies, and emergency contacts without needing login.<br><br>
-<em>Always ensure your emergency contacts are updated in Profile.</em>`;
-  }
-
-  // Generic fallback responses
-  const responses = [
-    `I understand you're asking about "${msg}". Based on your health profile, I recommend consulting your doctor for personalized advice. I can help with blood group info, allergy management, medication guidance, and general health tips.`,
-    `That's a great health question! For "${msg}" — in general medical practice, it's important to maintain regular check-ups and keep your health records updated. Your E-SHR profile helps doctors provide better care.`,
-    `For accurate advice on "${msg}", I'd recommend discussing with your healthcare provider. I can see your health summary — would you like me to explain your blood group, allergies, or recent prescriptions?`,
-  ];
-  return responses[Math.floor(Math.random() * responses.length)];
-}
+});
