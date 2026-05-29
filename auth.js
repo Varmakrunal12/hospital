@@ -11,9 +11,9 @@
 //   4. Replace the three constants below with your real IDs
 // ============================================================
 
-const EMAILJS_SERVICE_ID  = "YOUR_SERVICE_ID";   // e.g. "service_abc123"
-const EMAILJS_TEMPLATE_ID = "YOUR_TEMPLATE_ID";  // e.g. "template_xyz789"
-const EMAILJS_PUBLIC_KEY  = "YOUR_PUBLIC_KEY";   // e.g. "abc123XYZ..."
+const EMAILJS_SERVICE_ID  = "service_3pvyu62";   // e.g. "service_abc123"
+const EMAILJS_TEMPLATE_ID = "template_bcugzps";  // e.g. "template_xyz789"
+const EMAILJS_PUBLIC_KEY  = "E4Cf1HxduXx0oVQwI";   // e.g. "abc123XYZ..."
 
 // In-memory OTP store  { email -> { code, expiresAt } }
 const _otpStore = {};
